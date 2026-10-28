@@ -46,9 +46,17 @@ type_into() {
   adb shell input text "$2"
 }
 
+keyboard_shown() {
+  adb shell dumpsys input_method | grep -q "mInputShown=true"
+}
+
+# BACK closes the soft keyboard; only send it while the keyboard is up so it never leaves the screen.
 hide_keyboard() {
-  adb shell input keyevent 111 # KEYCODE_ESCAPE closes the IME without leaving the screen
-  sleep 0.5
+  for _ in 1 2 3; do
+    keyboard_shown || return 0
+    adb shell input keyevent 4
+    sleep 0.6
+  done
 }
 
 shot() {
@@ -74,8 +82,10 @@ sleep 1
 # --- flow ---------------------------------------------------------------------------------
 
 # 1. Splash screen (shown for one second)
-adb shell am start -n "$PKG/com.WorkCollabration.App.MainActivity" >/dev/null
-sleep 0.4
+# -W waits until the activity has drawn, so this captures the app's own splash layout
+# rather than the system launch screen.
+adb shell am start -W -n "$PKG/com.WorkCollabration.App.MainActivity" >/dev/null
+sleep 0.3
 shot 01-splash
 
 # 2. Login screen
@@ -85,9 +95,9 @@ shot 02-login
 
 # 3. Submitting an empty form is rejected before any network call
 tap_id signin
-sleep 0.6
+sleep 1.2 # toasts are drawn by System UI and appear with a short delay
 shot 03-login-validation
-sleep 2.5
+sleep 2
 
 # 4. Sign-up screen with inline validation
 tap_id signup
@@ -98,7 +108,12 @@ type_into editemail "not-an-email"
 type_into editpassword "secret12"
 hide_keyboard
 tap_id signup
-sleep 0.8
+sleep 0.5
+# The error message is only shown while the field has focus.
+tap_id editemail
+sleep 0.5
+hide_keyboard
+sleep 0.5
 shot 04-signup-validation
 sleep 1.5
 

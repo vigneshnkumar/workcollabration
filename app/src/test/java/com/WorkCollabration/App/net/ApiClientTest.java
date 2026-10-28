@@ -8,9 +8,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.InetSocketAddress;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -18,11 +21,12 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import com.sun.net.httpserver.HttpServer;
-
 public class ApiClientTest {
 
-	private HttpServer server;
+	// A minimal one-request-per-connection HTTP server on java.net only, because Android
+	// unit tests compile against android.jar, which hides com.sun.net.httpserver.
+	private ServerSocket server;
+	private Thread serverThread;
 	private final AtomicReference<String> lastBody = new AtomicReference<String>();
 	private final AtomicReference<String> lastContentType = new AtomicReference<String>();
 	private final AtomicReference<String> lastMethod = new AtomicReference<String>();
@@ -31,27 +35,78 @@ public class ApiClientTest {
 
 	@Before
 	public void startServer() throws IOException {
-		server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-		server.createContext("/", exchange -> {
-			lastMethod.set(exchange.getRequestMethod());
-			lastContentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
-			lastBody.set(readAll(exchange.getRequestBody()));
-			byte[] out = reply.getBytes(StandardCharsets.UTF_8);
-			exchange.sendResponseHeaders(status, out.length);
-			try (OutputStream os = exchange.getResponseBody()) {
-				os.write(out);
+		server = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"));
+		serverThread = new Thread(new Runnable() {
+			@Override
+			public void run() {
+				while (!server.isClosed()) {
+					try (Socket socket = server.accept()) {
+						handle(socket);
+					} catch (IOException e) {
+						// socket closed by stopServer()
+					}
+				}
 			}
-		});
-		server.start();
+		}, "test-http-server");
+		serverThread.setDaemon(true);
+		serverThread.start();
 	}
 
 	@After
-	public void stopServer() {
-		server.stop(0);
+	public void stopServer() throws IOException {
+		server.close();
+	}
+
+	private void handle(Socket socket) throws IOException {
+		InputStream in = socket.getInputStream();
+		String requestLine = readLine(in);
+		lastMethod.set(requestLine.substring(0, requestLine.indexOf(' ')));
+		int contentLength = 0;
+		String contentType = null;
+		String header;
+		while (!(header = readLine(in)).isEmpty()) {
+			int colon = header.indexOf(':');
+			String name = header.substring(0, colon).trim().toLowerCase(Locale.ROOT);
+			String value = header.substring(colon + 1).trim();
+			if (name.equals("content-length")) {
+				contentLength = Integer.parseInt(value);
+			} else if (name.equals("content-type")) {
+				contentType = value;
+			}
+		}
+		byte[] body = new byte[contentLength];
+		int read = 0;
+		while (read < contentLength) {
+			int n = in.read(body, read, contentLength - read);
+			if (n < 0) {
+				break;
+			}
+			read += n;
+		}
+		lastContentType.set(contentType);
+		lastBody.set(new String(body, 0, read, StandardCharsets.UTF_8));
+
+		byte[] out = reply.getBytes(StandardCharsets.UTF_8);
+		OutputStream os = socket.getOutputStream();
+		os.write(("HTTP/1.1 " + status + " X\r\nContent-Type: application/json; charset=UTF-8\r\nContent-Length: "
+				+ out.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+		os.write(out);
+		os.flush();
+	}
+
+	private static String readLine(InputStream in) throws IOException {
+		ByteArrayOutputStream line = new ByteArrayOutputStream();
+		int b;
+		while ((b = in.read()) != -1 && b != '\n') {
+			if (b != '\r') {
+				line.write(b);
+			}
+		}
+		return new String(line.toByteArray(), StandardCharsets.US_ASCII);
 	}
 
 	private String url() {
-		return "http://127.0.0.1:" + server.getAddress().getPort() + "/SignIn.php";
+		return "http://127.0.0.1:" + server.getLocalPort() + "/SignIn.php";
 	}
 
 	@Test
@@ -95,8 +150,12 @@ public class ApiClientTest {
 
 	@Test
 	public void unreachableServerThrowsIOException() {
-		int port = server.getAddress().getPort();
-		server.stop(0);
+		int port = server.getLocalPort();
+		try {
+			stopServer();
+		} catch (IOException e) {
+			throw new AssertionError(e);
+		}
 		try {
 			ApiClient.postForm("http://127.0.0.1:" + port + "/x.php", null);
 			fail("expected IOException");
@@ -132,15 +191,5 @@ public class ApiClientTest {
 		params.put("FromId", "3");
 		assertEquals("MaxDate=&FromId=3", ApiClient.encodeForm(params));
 		assertEquals("", ApiClient.encodeForm(null));
-	}
-
-	private static String readAll(InputStream in) throws IOException {
-		ByteArrayOutputStream out = new ByteArrayOutputStream();
-		byte[] buf = new byte[4096];
-		int n;
-		while ((n = in.read(buf)) != -1) {
-			out.write(buf, 0, n);
-		}
-		return new String(out.toByteArray(), StandardCharsets.UTF_8);
 	}
 }

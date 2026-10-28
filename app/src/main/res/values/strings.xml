@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">Onlinechat</string>
+    <string name="Email">Enter your email here</string>
+        <string name="Name">Enter your name here</string>
+    
+    <string name="Password">Enter your Password here</string>
+    <string name="hello_world">Hello world!</string>
+    <string name="title_activity_loginpage">Loginpage</string>
+    <string name="title_activity_homepage">Homepage</string>
+    <string name="title_activity_contactspage">Contactspage</string>
+    <string name="title_activity_chatpage">Chatpage</string>
+    <string name="title_activity_myaccpage">Myaccpage</string>
+    <string name="title_activity_add_contact">AddContact</string>
+    <string name="action_settings">Settings</string>
+    <string name="title_activity_grouppage">Grouppage</string>
+    <string name="dot">.</string>
+
+</resources>
